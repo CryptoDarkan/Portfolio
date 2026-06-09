@@ -1,42 +1,52 @@
 const toast = document.getElementById("toast");
 
 let audioCtx = null;
-let audioReady = false;
-let soundHintShown = false;
 let lastHoverSound = 0;
 
 function prefersReducedEffects() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-async function unlockAudio() {
-  if (prefersReducedEffects()) return false;
+function ensureAudioContext() {
+  if (prefersReducedEffects()) return null;
 
   try {
-    if (!audioCtx) {
+    if (!audioCtx || audioCtx.state === "closed") {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
     if (audioCtx.state === "suspended") {
-      await audioCtx.resume();
+      void audioCtx.resume();
     }
-    audioReady = audioCtx.state === "running";
-    return audioReady;
+    return audioCtx;
   } catch {
-    audioReady = false;
+    return null;
+  }
+}
+
+async function unlockAudio() {
+  const ctx = ensureAudioContext();
+  if (!ctx) return false;
+  if (ctx.state === "running") return true;
+
+  try {
+    await ctx.resume();
+    return ctx.state === "running";
+  } catch {
     return false;
   }
 }
 
 function playProjectHoverSound() {
-  if (prefersReducedEffects() || !audioReady || !audioCtx) return;
+  const ctx = ensureAudioContext();
+  if (!ctx || ctx.state !== "running") return;
 
   const now = performance.now();
   if (now - lastHoverSound < 90) return;
   lastHoverSound = now;
 
-  const t = audioCtx.currentTime;
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
+  const t = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
 
   osc.type = "triangle";
   osc.frequency.setValueAtTime(640, t);
@@ -47,21 +57,18 @@ function playProjectHoverSound() {
   gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
 
   osc.connect(gain);
-  gain.connect(audioCtx.destination);
+  gain.connect(ctx.destination);
   osc.start(t);
   osc.stop(t + 0.08);
 }
 
-async function onPageActivate() {
-  const ok = await unlockAudio();
-  if (ok && !soundHintShown) {
-    soundHintShown = true;
-    showToast("Zvuk uključen. Pređi mišem preko projekta");
-  }
+function onPageActivate() {
+  void unlockAudio();
 }
 
-document.addEventListener("click", onPageActivate, { capture: true });
-document.addEventListener("keydown", onPageActivate, { once: true });
+document.addEventListener("pointerdown", onPageActivate, { capture: true, passive: true });
+document.addEventListener("touchstart", onPageActivate, { capture: true, passive: true });
+document.addEventListener("keydown", onPageActivate, { capture: true, once: true });
 
 const projectList = document.getElementById("project-list");
 const projectModal = document.getElementById("project-modal");
@@ -101,12 +108,10 @@ function getProjectScreenshots(project) {
 }
 
 function bindProjectRowSound(row) {
-  row.addEventListener("mouseenter", async () => {
-    if (!audioReady) {
-      if (!soundHintShown) {
-        showToast("Prvo klikni bilo gdje na stranici da uključiš zvuk");
-      }
-      return;
+  row.addEventListener("pointerenter", async () => {
+    const ctx = ensureAudioContext();
+    if (!ctx || ctx.state !== "running") {
+      await unlockAudio();
     }
     playProjectHoverSound();
   });
