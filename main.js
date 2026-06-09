@@ -2,6 +2,7 @@ const toast = document.getElementById("toast");
 
 let audioCtx = null;
 let lastHoverSound = 0;
+let hoverSoundPending = false;
 
 function prefersReducedEffects() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -23,8 +24,19 @@ function ensureAudioContext() {
   }
 }
 
-async function unlockAudio() {
+function unlockAudioSync() {
   const ctx = ensureAudioContext();
+  if (!ctx || ctx.state === "running") return ctx;
+  try {
+    void ctx.resume();
+  } catch {
+    // Browser blocked until a user gesture.
+  }
+  return ctx;
+}
+
+async function unlockAudio() {
+  const ctx = unlockAudioSync();
   if (!ctx) return false;
   if (ctx.state === "running") return true;
 
@@ -62,13 +74,60 @@ function playProjectHoverSound() {
   osc.stop(t + 0.08);
 }
 
+function requestHoverSound() {
+  if (prefersReducedEffects()) return;
+
+  const ctx = ensureAudioContext();
+  if (!ctx) return;
+  if (ctx.state === "running") {
+    playProjectHoverSound();
+    return;
+  }
+
+  hoverSoundPending = true;
+  const tryPlay = () => {
+    if (!hoverSoundPending || ctx.state !== "running") return;
+    hoverSoundPending = false;
+    playProjectHoverSound();
+  };
+
+  ctx.onstatechange = tryPlay;
+  void ctx.resume().then(tryPlay).catch(() => {
+    hoverSoundPending = false;
+  });
+}
+
+function bootAudio() {
+  if (prefersReducedEffects()) return;
+  const activation = navigator.userActivation;
+  if (activation?.isActive || activation?.hasBeenActive) {
+    void unlockAudio();
+  }
+}
+
 function onPageActivate() {
+  unlockAudioSync();
+  if (audioCtx?.state === "running") {
+    if (hoverSoundPending) {
+      hoverSoundPending = false;
+      playProjectHoverSound();
+    }
+    return;
+  }
   void unlockAudio();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootAudio, { once: true });
+} else {
+  bootAudio();
 }
 
 document.addEventListener("pointerdown", onPageActivate, { capture: true, passive: true });
 document.addEventListener("touchstart", onPageActivate, { capture: true, passive: true });
-document.addEventListener("keydown", onPageActivate, { capture: true, once: true });
+document.addEventListener("click", onPageActivate, { capture: true, passive: true });
+document.addEventListener("wheel", onPageActivate, { capture: true, passive: true });
+document.addEventListener("keydown", onPageActivate, { capture: true });
 
 const projectList = document.getElementById("project-list");
 const projectModal = document.getElementById("project-modal");
@@ -108,17 +167,13 @@ function getProjectScreenshots(project) {
 }
 
 function bindProjectRowSound(row) {
-  row.addEventListener("pointerenter", async () => {
-    const ctx = ensureAudioContext();
-    if (!ctx || ctx.state !== "running") {
-      await unlockAudio();
-    }
-    playProjectHoverSound();
+  row.addEventListener("pointerenter", () => {
+    requestHoverSound();
   });
 
-  row.addEventListener("pointerdown", async (event) => {
+  row.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
-    await unlockAudio();
+    unlockAudioSync();
     playProjectHoverSound();
   });
 }
