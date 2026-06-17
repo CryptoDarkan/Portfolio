@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "serve . -l 3000",
     "start": "npm run dev",
-    "signature": "node scripts/process-signature.mjs"
+    "signature": "node scripts/process-signature.mjs",
+    "og-image": "node scripts/generate-og-image.mjs"
   },
   "devDependencies": {
     "serve": "^14.2.6",
